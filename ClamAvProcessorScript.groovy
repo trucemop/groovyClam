@@ -8,7 +8,7 @@ import org.apache.nifi.annotation.lifecycle.OnStopped
 
 import java.io.InputStream
 
-class ClamAvProcessor extends AbstractProcessor {
+class ClamAvProcessor implements Processor {
     public static final PropertyDescriptor HOST = new PropertyDescriptor.Builder()
             .displayName("Host")
             .name("clam-host")
@@ -33,19 +33,65 @@ class ClamAvProcessor extends AbstractProcessor {
     def REL_FAILURE = new Relationship.Builder().name("failure").description('FlowFiles that fail to process are routed here').build()    
 
     def log
+    def clamHost = null
+    def clamPort = -1
+    ClamavClient client = null;
+    private Set<Relationship> relationships;
     
-    ClamavClient client
-    
+    private List<PropertyDescriptor> properties;    
     
     @Override    
     Set<Relationship> getRelationships() {
-        return [REL_SUCCESS,REL_SCANFAILURE,REL_FAILURE] as Set
+        return relationships;
+    }    
+
+    @Override
+    public void initialize(final ProcessorInitializationContext context) {        
+        final List<PropertyDescriptor> properties = new ArrayList<>();
+        properties.add(HOST);
+        properties.add(PORT);
+        this.properties = Collections.unmodifiableList(properties);        
+        final Set<Relationship> rels = new HashSet<>();
+        rels.add(REL_SUCCESS);
+        rels.add(REL_SCANFAILURE);
+        rels.add(REL_FAILURE);
+        this.relationships = Collections.unmodifiableSet(rels);
     }    
     
+    
     @Override
-    public void onTrigger(final ProcessContext context, final ProcessSession session) {
+    public List<PropertyDescriptor> getPropertyDescriptors() {
+        return properties;
+    }
+   
+    @Override
+    public PropertyDescriptor getPropertyDescriptor(String descriptorName) {
+	final PropertyDescriptor specDescriptor = new PropertyDescriptor.Builder().name(descriptorName).build();
+        final List<PropertyDescriptor> propertyDescriptors = getPropertyDescriptors();
+        if (propertyDescriptors != null) {
+            for (final PropertyDescriptor desc : propertyDescriptors) { //find actual descriptor
+                if (specDescriptor.equals(desc)) {
+                    return desc;
+                }
+            }
+        }
+	return null;
 
+
+    }
+ 
+    @Override
+    public void onTrigger(final ProcessContext context, final ProcessSessionFactory sessionFactory) {
+	def session = sessionFactory.createSession()
         def flowFile = session.get()
+	if (client == null || clamHost == null || clamPort == null) {
+	
+        	clamHost = context.getProperty(HOST).evaluateAttributeExpressions().getValue()
+        	clamPort = context.getProperty(PORT).evaluateAttributeExpressions().asInteger()
+        
+        	client = new ClamavClient(clamHost, clamPort);
+
+	}
         try {            
             if (!flowFile) 
                 return
@@ -82,22 +128,19 @@ class ClamAvProcessor extends AbstractProcessor {
     }    
       
     
-    @Override    
-    List<PropertyDescriptor> getSupportedPropertyDescriptors() { 
-        List<PropertyDescriptor> descriptors = new ArrayList<>();
-        descriptors.add(HOST);  
-        descriptors.add(PORT);
-	return descriptors;
-    }    
 
-    
-    @OnScheduled
-    public final void onScheduled(final ProcessContext context) throws IOException {
-        def clamHost = context.getProperty(HOST).evaluateAttributeExpressions().getValue()
-        def clamPort = context.getProperty(PORT).evaluateAttributeExpressions().asInteger()
-        
-        client = new ClamavClient(clamHost, clamPort);
+    @Override
+    public void onPropertyModified(final PropertyDescriptor descriptor, final String oldValue, final String newValue) {
+    	clamHost = null;
+    	clamPort = -1;
+	client = null;
     }
-    
+    @Override
+    public Collection<ValidationResult> validate(final ValidationContext context) {
+        return Collections.emptySet();
+    }
+        
+    @Override
+    String getIdentifier() { return null }
 }
 processor = new ClamAvProcessor()
